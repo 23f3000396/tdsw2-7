@@ -1,0 +1,67 @@
+name: Log ISS Location Data Daily (with cache)
+
+on:
+  schedule:
+    - cron: "0 12 * * *"   # Runs at 12:00 UTC every day
+  workflow_dispatch:       # allows manual trigger
+
+permissions:
+  contents: write
+
+jobs:
+  collect-iss-data:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Cache step with explicit key "cache-de752af"
+      - id: cache-de752af
+        name: Restore (or create) cache-de752af
+        uses: actions/cache@v4
+        with:
+          # cache path for pip, adjust if you use different package manager
+          path: ~/.cache/pip
+          key: cache-de752af
+
+      # Prime/check step that prints cache hit/miss
+      - name: prime-cache-de752af
+        run: |
+          echo "Cache hit value: ${{ steps.cache-de752af.outputs.cache-hit }}"
+          if [ "${{ steps.cache-de752af.outputs.cache-hit }}" = "true" ]; then
+            echo "Cache was HIT - reusing cached pip files"
+          else
+            echo "Cache was MISS - will create cache after installing deps"
+          fi
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies (so cache can prime)
+        run: |
+          python -m pip install --upgrade pip
+          # Example dependency to populate pip cache (requests)
+          pip install requests
+
+      - name: Fetch ISS location data and append to file
+        run: |
+          python - <<'PY'
+          import requests, json, sys
+          r = requests.get('http://api.open-notify.org/iss-now.json', timeout=10)
+          # Ensure file exists and append as JSON line
+          with open('iss-location.jsonl', 'a') as f:
+              f.write(r.text.strip() + '\n')
+          print("Appended ISS data.")
+          PY
+
+      - name: Commit and push changes
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add iss-location.jsonl
+          # Commit only if there are staged changes; the || true avoids failing the workflow when nothing changed
+          git commit -m "Update ISS position data [skip ci]" || true
+          git push
